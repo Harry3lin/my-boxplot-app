@@ -2,83 +2,88 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-st.title("Excel 箱形圖分析器")
+st.set_page_config(layout="wide")  # 讓網頁變寬，方便左右並排兩張圖
+st.title("機台測試最終數值箱形圖分析器")
 
-# 1. 建立檔案上傳組件
 uploaded_file = st.file_uploader("請上傳您的 Excel 檔案", type=["xlsx", "xls"])
 
 if uploaded_file is not None:
   try:
-    # 2. 讀取 Excel 數據
+    # 1. 讀取原始 Excel 數據
     df = pd.read_excel(uploaded_file)
 
-    # 顯示前五筆數據讓用戶確認
-    st.write("數據預覽：")
-    st.dataframe(df.head())
+    # 2. 強制轉換特定欄位型態
+    df["Pressure(Pa)"] = pd.to_numeric(df["Pressure(Pa)"], errors="coerce")
+    df["Leak"] = pd.to_numeric(df["Leak"], errors="coerce")
+    df["Step"] = pd.to_numeric(df["Step"], errors="coerce")
 
-    # 強制將所有欄位嘗試轉換為數字
-    for col in df.columns:
-      converted = pd.to_numeric(df[col], errors="coerce")
-      if converted.notna().sum() > (len(df) * 0.5):
-        df[col] = converted
+    # 3. 核心過濾邏輯：找出每台 SN 的最大 Step 的「最後一筆資料」
+    final_records = []
 
-    # 3. 篩選出所有「數字型態」的欄位（畫圖用）
-    numeric_columns = df.select_dtypes(include=["number"]).columns.tolist()
+    # 依 SN 分組處理
+    for sn, sn_group in df.groupby("SN"):
+      if pd.isna(sn):
+        continue
 
-    # 4. 篩選出適合用來「分組」的欄位（包含文字、或種類較少的數字）
-    all_columns = df.columns.tolist()
+      # 找到該 SN 的最大 Step 數值
+      max_step = sn_group["Step"].max()
 
-    if len(numeric_columns) > 0:
-      col1, col2, col3 = st.columns(3)
+      # 篩選出屬於該最大 Step 的所有數據
+      max_step_data = sn_group[sn_group["Step"] == max_step]
+
+      if not max_step_data.empty:
+        # 取出這個最大 Step 裡面的「最後一筆」（即最終完工值，如 7074 和 -0.74）
+        final_row = max_step_data.iloc[-1]
+        final_records.append(final_row)
+
+    # 將過濾出來的最終資料組合成新的 DataFrame
+    filtered_df = pd.DataFrame(final_records)
+
+    if not filtered_df.empty:
+      # 數據預覽與統計資訊
+      st.subheader(f"📊 已過濾出共 {len(filtered_df)} 台 SN 的最終測試數值")
+
+      # 使用 Streamlit 的欄位組件，將網頁切成左右兩半
+      col1, col2 = st.columns(2)
 
       with col1:
-        selected_col = st.selectbox(
-            "請選擇要畫箱形圖的欄位：", numeric_columns
+        st.write("### Pressure(Pa) 最終值分佈")
+        # 繪製 Pressure 箱形圖
+        fig_pressure = px.box(
+            filtered_df,
+            y="Pressure(Pa)",
+            points="all",  # 因為只有幾十台 SN，顯示所有點能看清每台的分佈
+            hover_data=["SN", "Step"],  # 滑鼠移上去時顯示是哪台 SN 與它最大的 Step 是多少
+            title="各機台最大 Step 的 Pressure 最終值",
         )
+        fig_pressure.update_traces(marker_color="#1f77b4", boxmean=True)
+        fig_pressure.update_layout(height=600)
+        st.plotly_chart(fig_pressure, use_container_width=True)
 
       with col2:
-        # 讓用戶選擇要依據哪一欄來分組（例如 Step 或 Phase），預設不分組
-        group_col = st.selectbox(
-            "請選擇分組欄位（選填）：", ["無"] + all_columns
+        st.write("### Leak 最終值分佈")
+        # 繪製 Leak 箱形圖
+        fig_leak = px.box(
+            filtered_df,
+            y="Leak",
+            points="all",
+            hover_data=["SN", "Step"],
+            title="各機台最大 Step 的 Leak 最終值",
         )
+        fig_leak.update_traces(marker_color="#ff7f0e", boxmean=True)
+        fig_leak.update_layout(height=600)
+        st.plotly_chart(fig_leak, use_container_width=True)
 
-      with col3:
-        # 讓用戶自由控制要不要顯示那麼多密集的點
-        point_option = st.selectbox(
-            "原始數據點顯示方式：",
-            ["outliers", "none", "all"],
-            index=0,  # 預設改為 outliers（只顯示極端值），圖表才會乾淨
-            format_func=lambda x: {
-                "outliers": "僅顯示離群值 (推薦)",
-                "none": "不顯示數據點",
-                "all": "顯示所有數據點",
-            }[x],
+      # 在下方附帶顯示過濾後的數據清單，供你對帳確認
+      with st.expander("點擊查看過濾後的數據明細"):
+        st.dataframe(
+            filtered_df[["SN", "Step", "Pressure(Pa)", "Leak"]].reset_index(
+                drop=True
+            )
         )
-
-      # 5. 根據用戶選擇決定分組參數
-      x_param = None if group_col == "無" else group_col
-      color_param = None if group_col == "無" else group_col
-
-      # 6. 畫圖並呈現
-      fig = px.box(
-          df,
-          x=x_param,
-          y=selected_col,
-          color=color_param,
-          points=point_option,
-          title=f"欄位【{selected_col}】的箱形圖分析結果",
-      )
-
-      # 稍微把圖表縮小一點，避免左右拉太寬
-      fig.update_layout(boxmode="group", width=800, height=600)
-
-      st.plotly_chart(fig)
 
     else:
-      st.error(
-          "這個 Excel 檔案裡面似乎沒有任何數字欄位，或無法成功轉換為數字喔！"
-      )
+      st.error("無法從 Excel 檔案中成功解析出 SN、Step、Pressure 或 Leak 數據！")
 
   except Exception as e:
-    st.error(f"讀取檔案時出錯了：{e}")
-
+    st.error(f"執行邏輯時出錯了：{e}")
