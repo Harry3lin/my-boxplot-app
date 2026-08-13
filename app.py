@@ -40,8 +40,25 @@ if uploaded_file is not None:
     filtered_df = pd.DataFrame(final_records)
 
     if not filtered_df.empty:
+      # 🌟 建立控制開關：預設不勾選（自動過濾極端值，讓圖表好看）
+      # 勾選時才顯示所有極端值
+      show_outliers = st.checkbox(
+          "顯示所有極端值 (outlier)",
+          value=False,
+          help="不勾選時，系統會自動剔除 Pressure < 5000 且 Leak > 5 的明顯異常數據，以便放大觀看正常箱子分佈。",
+      )
+
+      # 🌟 根據開關狀態決定是否過濾數據
+      if not show_outliers:
+        # 只保留正常範圍的數據：Pressure >= 5000 且 Leak <= 5
+        plot_df = filtered_df[
+            (filtered_df["Pressure(Pa)"] >= 5000) & (filtered_df["Leak"] <= 5)
+        ]
+      else:
+        plot_df = filtered_df
+
       # 數據預覽與統計資訊
-      st.subheader(f"📊 已過濾出共 {len(filtered_df)} 台 SN 的最終測試數值")
+      st.subheader(f"📊 當前圖表分析共包含 {len(plot_df)} 台 SN 的數據")
 
       # 使用 Streamlit 的欄位組件，將網頁切成左右兩半
       col1, col2 = st.columns(2)
@@ -50,10 +67,10 @@ if uploaded_file is not None:
         st.write("### Pressure(Pa) 最終值分佈")
         # 繪製 Pressure 箱形圖
         fig_pressure = px.box(
-            filtered_df,
+            plot_df,
             y="Pressure(Pa)",
-            points="all",  # 因為只有幾十台 SN，顯示所有點能看清每台的分佈
-            hover_data=["SN", "Step"],  # 滑鼠移上去時顯示是哪台 SN 與它最大的 Step 是多少
+            points="all",  # 顯示數據點
+            hover_data=["SN", "Step"],  # 滑鼠移上去顯示詳細資訊
             title="各機台最大 Step 的 Pressure 最終值",
         )
         fig_pressure.update_traces(marker_color="#1f77b4", boxmean=True)
@@ -64,7 +81,7 @@ if uploaded_file is not None:
         st.write("### Leak 最終值分佈")
         # 繪製 Leak 箱形圖
         fig_leak = px.box(
-            filtered_df,
+            plot_df,
             y="Leak",
             points="all",
             hover_data=["SN", "Step"],
@@ -75,9 +92,9 @@ if uploaded_file is not None:
         st.plotly_chart(fig_leak, use_container_width=True)
 
       # 在下方附帶顯示過濾後的數據清單，供你對帳確認
-      with st.expander("點擊查看過濾後的數據明細"):
+      with st.expander("點擊查看當前圖表數據明細"):
         st.dataframe(
-            filtered_df[["SN", "Step", "Pressure(Pa)", "Leak"]].reset_index(
+            plot_df[["SN", "Step", "Pressure(Pa)", "Leak"]].reset_index(
                 drop=True
             )
         )
